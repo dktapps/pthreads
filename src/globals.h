@@ -57,6 +57,11 @@ struct _pthreads_globals {
 #endif
 
 	/*
+	* File included on all new threads before any user code runs, usually an autoloader
+	*/
+	zend_string *autoload_file;
+
+	/*
 	* High Frequency Strings
 	*/
 	struct _strings {
@@ -100,6 +105,9 @@ zend_bool pthreads_globals_lock(); /* }}} */
 
 /* {{{ release global lock */
 void pthreads_globals_unlock(); /* }}} */
+
+/* {{{ set autoload file used to bootstrap new threads */
+zend_bool pthreads_globals_set_autoload_file(const zend_string *autoload_file); /* }}} */
 
 /* {{{ shutdown global structures */
 void pthreads_globals_shutdown(); /* }}} */

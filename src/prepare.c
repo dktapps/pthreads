@@ -814,8 +814,56 @@ void pthreads_prepare_parent(pthreads_object_t *thread) {
 	}
 } /* }}} */
 
+/* {{{ Includes the autoloader provided, if any. This code is borrowed from krakjoe/parallel. */
+static int pthreads_thread_bootstrap(zend_string *file) {
+	zend_file_handle fh;
+	zend_op_array *ops;
+	zval rv;
+	int result;
+
+	if (!file) {
+		return SUCCESS;
+	}
+
+	result = php_stream_open_for_zend_ex(ZSTR_VAL(file), &fh, USE_PATH|REPORT_ERRORS|STREAM_OPEN_FOR_INCLUDE);
+
+	if (result != SUCCESS) {
+		return FAILURE;
+	}
+
+	zend_hash_add_empty_element(&EG(included_files),
+			fh.opened_path ?
+			fh.opened_path : file);
+
+	ops = zend_compile_file(&fh, ZEND_REQUIRE);
+
+	zend_destroy_file_handle(&fh);
+
+	if (ops) {
+		ZVAL_UNDEF(&rv);
+		zend_execute(ops, &rv);
+		destroy_op_array(ops);
+		efree(ops);
+
+		if (EG(exception)) {
+			zend_clear_exception();
+			return FAILURE;
+		}
+
+		zval_ptr_dtor(&rv);
+		return SUCCESS;
+	}
+
+	if (EG(exception)) {
+		zend_clear_exception();
+	}
+
+	return FAILURE;
+} /* }}} */
+
 /* {{{ */
 int pthreads_prepared_startup(pthreads_object_t* thread, pthreads_monitor_t *ready, zend_class_entry *thread_ce) {
+	zend_string *autoload_file = NULL;
 
 	PTHREADS_PREPARATION_BEGIN_CRITICAL() {
 		thread->local.id = pthreads_self();
@@ -870,10 +918,24 @@ int pthreads_prepared_startup(pthreads_object_t* thread, pthreads_monitor_t *rea
 
 		pthreads_prepare_exception_handler(thread);
 		pthreads_prepare_resource_destructor(thread);
+
+		if (PTHREADS_G(autoload_file)) {
+			autoload_file = zend_string_init(ZSTR_VAL(PTHREADS_G(autoload_file)), ZSTR_LEN(PTHREADS_G(autoload_file)), 1);
+		}
 		pthreads_monitor_add(ready, PTHREADS_MONITOR_READY);
 	} PTHREADS_PREPARATION_END_CRITICAL();
 
-	return SUCCESS;
+	int result = SUCCESS;
+
+	if (autoload_file != NULL) {
+		int result = FAILURE;
+		if (pthreads_thread_bootstrap(autoload_file) == FAILURE) {
+			pthreads_monitor_add(ready, PTHREADS_MONITOR_ERROR);
+			result = FAILURE;
+		}
+		zend_string_release(autoload_file);
+	}
+	return result;
 } /* }}} */
 
 /* {{{ */
